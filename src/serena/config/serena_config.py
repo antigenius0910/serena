@@ -4,18 +4,15 @@ The Serena Model Context Protocol (MCP) Server
 
 import os
 import shutil
-import sys
 from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import cached_property
-from logging import Logger
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import yaml
 from ruamel.yaml.comments import CommentedMap
 from sensai.util import logging
-from sensai.util.logging import FallbackHandler
 from sensai.util.string import ToStringMixin
 
 from serena.constants import (
@@ -36,27 +33,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 DEFAULT_TOOL_TIMEOUT: float = 240
-
-
-def show_fatal_exception_safe(e: Exception) -> None:
-    """
-    Shows the given exception in the GUI log viewer on the main thread and ensures that the exception is logged or at
-    least printed to stderr.
-    """
-    # Make sure the error is logged (adding a fallback handler which writes to stderr in case there is no other handler)
-    fallback_handler = FallbackHandler(logging.StreamHandler(sys.stderr))
-    Logger.root.addHandler(fallback_handler)
-    log.error(f"Fatal exception: {e}", exc_info=e)
-
-    # attempt to show the error in the GUI
-    try:
-        # NOTE: The import can fail on macOS if Tk is not available (depends on Python interpreter installation, which uv
-        #   used as a base); while tkinter as such is always available, its dependencies can be unavailable on macOS.
-        from serena.gui_log_viewer import show_fatal_exception
-
-        show_fatal_exception(e)
-    except:
-        pass
 
 
 class SerenaConfigError(Exception):
@@ -247,11 +223,12 @@ class SerenaConfig:
         else:
             config_path = str(Path.home() / SERENA_MANAGED_DIR_NAME / cls.CONFIG_FILE)
 
-            # migrate configuration in old location
-            old_config_path = os.path.join(REPO_ROOT, cls.CONFIG_FILE)
-            if os.path.exists(old_config_path):
-                log.info(f"Moving Serena configuration file from {old_config_path} to {config_path}")
-                shutil.move(old_config_path, config_path)
+            # if the config file does not exist, check if we can migrate it from the old location
+            if not os.path.exists(config_path):
+                old_config_path = os.path.join(REPO_ROOT, cls.CONFIG_FILE)
+                if os.path.exists(old_config_path):
+                    log.info(f"Moving Serena configuration file from {old_config_path} to {config_path}")
+                    shutil.move(old_config_path, config_path)
 
             return config_path
 

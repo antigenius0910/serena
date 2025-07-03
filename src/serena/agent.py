@@ -2,7 +2,7 @@
 The Serena Model Context Protocol (MCP) Server
 """
 
-import contextlib
+import multiprocessing
 import os
 import platform
 import sys
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, Union
 import click
 from pathspec import PathSpec
 from sensai.util import logging
-from sensai.util.logging import FallbackHandler, LogTime
+from sensai.util.logging import LogTime
 
 from serena import serena_version
 from serena.config.context_mode import SerenaAgentContext, SerenaAgentMode
@@ -44,27 +44,6 @@ TTool = TypeVar("TTool", bound="Tool")
 T = TypeVar("T")
 SUCCESS_RESULT = "OK"
 DEFAULT_TOOL_TIMEOUT: float = 240
-
-
-def show_fatal_exception_safe(e: Exception) -> None:
-    """
-    Shows the given exception in the GUI log viewer on the main thread and ensures that the exception is logged or at
-    least printed to stderr.
-    """
-    # Make sure the error is logged (adding a fallback handler which writes to stderr in case there is no other handler)
-    fallback_handler = FallbackHandler(logging.StreamHandler(sys.stderr))
-    Logger.root.addHandler(fallback_handler)
-    log.error(f"Fatal exception: {e}", exc_info=e)
-
-    # attempt to show the error in the GUI
-    try:
-        # NOTE: The import can fail on macOS if Tk is not available (depends on Python interpreter installation, which uv
-        #   used as a base); while tkinter as such is always available, its dependencies can be unavailable on macOS.
-        from serena.gui_log_viewer import show_fatal_exception
-
-        show_fatal_exception(e)
-    except:
-        pass
 
 
 class ProjectNotFoundError(Exception):
@@ -273,11 +252,10 @@ class SerenaAgent:
             Logger.root.addHandler(dashboard_log_handler)
             self._dashboard_thread, port = SerenaDashboardAPI(dashboard_log_handler, tool_names).run_in_thread()
             if self.serena_config.web_dashboard_open_on_launch:
-                # open the dashboard URL in the default web browser, making sure to redirect output,
-                # as this can print to stdout (contaminating the MCP server stream)
-                with open(os.devnull, "w") as fnull:
-                    with contextlib.redirect_stdout(fnull), contextlib.redirect_stderr(fnull):
-                        webbrowser.open(f"http://localhost:{port}/dashboard/index.html")
+                # open the dashboard URL in the default web browser (using a separate process to control
+                # output redirection)
+                process = multiprocessing.Process(target=self._open_dashboard, args=(port,))
+                process.start()
 
         # log fundamental information
         log.info(f"Starting Serena server (version={serena_version()}, process id={os.getpid()}, parent process id={os.getppid()})")
@@ -325,6 +303,18 @@ class SerenaAgent:
                     f"Error activating project '{project}': {e}; Note that out-of-project configurations were migrated. "
                     "You should now pass either --project <project_name> or --project <project_root>."
                 )
+
+    @staticmethod
+    def _open_dashboard(port: int) -> None:
+        # Redirect stdout and stderr file descriptors to /dev/null,
+        # making sure that nothing can be written to stdout/stderr, even by subprocesses
+        null_fd = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null_fd, sys.stdout.fileno())
+        os.dup2(null_fd, sys.stderr.fileno())
+        os.close(null_fd)
+
+        # open the dashboard URL in the default web browser
+        webbrowser.open(f"http://localhost:{port}/dashboard/index.html")
 
     def get_project_root(self) -> str:
         """
