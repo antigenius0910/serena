@@ -26,7 +26,7 @@ jobs:
       - uses: actions/cache@v3
         name: Cache dependencies
         with:
-          path: ~/.cache/uv
+          path: ${{ env.HOME }}/.cache/uv
           key: uv-${{ hashFiles('pyproject.toml') }}
       - name: Install dependencies
         run: |
